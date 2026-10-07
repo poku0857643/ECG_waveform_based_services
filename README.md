@@ -56,3 +56,17 @@ Is a patient's own pair of ECGs more similar than two ECGs of different patients
 The **median beat** works best; the raw signal fails because beats fall at different times in each recording.
 
 ![similarity](model/ecg_pair_similarity_auc.png)
+
+## 3. Data cleaning test and median-beat clustering (`study/cleaning-clustering`)
+
+Signal processing moves to `model/watch_pipeline.py` (shared later with the API).
+- **Beat detection on all 12 leads** (root-sum-square) instead of lead II: beats misaligned by >= 30 ms drop from
+  1,193 to 67 patients
+- **Quality filter**: pacemaker, electrode problems, flat lead, amplitude > 10 mV, inconsistent beats (r < 0.8) ->
+  642 of 18,869 excluded (3.4%)
+- same-patient AUC 0.937 -> **0.970** (all-lead detection + filter + shift-tolerant Pearson)
+- k-means on the cleaned median beats (k = 4) of 18,227 patients: groups range from 67% normal ECGs (median age 52)
+  to a mostly abnormal group (56% MI, 46% CD); separation is modest (silhouette 0.15-0.23)
+
+![cleaning](model/cleaning_test.png)
+![clusters](model/median_beat_clusters_distribution.png)
