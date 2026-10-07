@@ -235,3 +235,101 @@ class WatchModel:
             out["bmi"] = round(user["weight_kg"] / (user["height_cm"] / 100) ** 2, 1)  # reported only: too sparse in PTB-XL
         out["disclaimer"] = DISCLAIMER
         return plain(out)
+
+    # --- step 2: health / lifestyle actions ---
+    def low_rmssd_cutoff(self, age):
+        s2 = self.b["step2"]
+        if age != age:  # unknown age (e.g. > 89, masked in PTB-XL)
+            return s2["rmssd_low_overall"]
+        return s2["hrv_norms"].loc[pd.cut([age], s2["age_bands"], right=False)[0], "10%"]
+
+    def health_actions(self, user, rec_1, rec_2):
+        """Step 2: user info + two watch recordings (older first) -> prioritised actions (+ the step-1 result)."""
+        s2 = self.b["step2"]
+        rules, af_feature, af_threshold = s2["rules"], s2["af_feature"], s2["af_threshold"]
+        user = clean_user(user)
+        step1 = self.recommend(user, rec_1, rec_2)
+        acts = []
+
+        def add(level, rule, action, reason):
+            acts.append({"level": level, "category": LEVELS[level], "rule": rule, "action": action, "reason": reason})
+
+        usable = [r["usable"] for r in step1["recordings"]]
+        rhythm = [rhythm_features(watch_rr(rec["signal"], rec["fs"])) if ok else None for rec, ok in zip([rec_1, rec_2], usable)]
+        if not all(r is not None for r in rhythm):  # R1
+            add(3, "R1", "Re-record: sit still for 1 minute first, rest your arm on a table, keep your finger on the electrode "
+                         "for the whole recording.", f"{sum(r is None for r in rhythm)} of 2 recordings too noisy to read")
+        if all(r is None for r in rhythm):
+            return plain({"top_action": acts[0], "actions": acts, "rhythm": rhythm, "step1": step1})
+
+        latest = next(r for r in reversed(rhythm) if r is not None)
+        hr = latest["heart_rate"]
+        irregular = [r is not None and r[af_feature] > af_threshold for r in rhythm]
+        label = user.get("diagnosed_label")
+        known_diagnosis = label in SUPERCLASSES and label != "NORM"
+        group = step1.get("group", {}).get("group")
+        age = user["age"]
+
+        if hr < rules["hr_urgent_low"] or hr > rules["hr_urgent_high"]:  # R2
+            add(1, "R2", "Seek medical advice promptly - urgently if you feel dizzy, faint, short of breath or have chest pain.",
+                f"resting heart rate {hr:.0f} bpm")
+        elif hr > rules["hr_high"]:  # R3
+            add(3, "R3", "Rest for 5 minutes and re-record; if it stays above 100 bpm at rest, see a clinician.",
+                f"resting heart rate {hr:.0f} bpm (> {rules['hr_high']})")
+        elif hr < rules["hr_low"]:  # R4
+            add(4, "R4", "A slow heart rate is common if you are physically fit; if you feel dizzy or unusually tired, "
+                         "see a clinician.", f"resting heart rate {hr:.0f} bpm (< {rules['hr_low']})")
+
+        if all(irregular):  # R5
+            add(2, "R5", "Irregular rhythm in both recordings (possible atrial fibrillation) - see a clinician and share "
+                         "these recordings.", f"{af_feature} above {af_threshold:.2f} in both")
+        elif irregular[-1]:  # R6
+            add(3, "R6", "Irregular rhythm in the latest recording - re-record at rest; if it is irregular again, see a clinician.",
+                f"{af_feature} {rhythm[-1][af_feature]:.2f} > {af_threshold:.2f}")
+
+        if step1.get("change", {}).get("changed"):  # R7
+            add(2, "R7", "Your heartbeat shape changed between recordings - re-record; if the change persists, see a clinician.",
+                f"beat similarity r = {step1['change']['similarity']:.2f} < {step1['change']['threshold']:.2f}")
+        if group == 4 and not known_diagnosis:  # R8
+            add(2, "R8", "Your heartbeat shape resembles a group where almost all PTB-XL patients had abnormal 12-lead "
+                         "findings - ask a clinician about a 12-lead ECG.", "step-1 group 4")
+        if known_diagnosis:  # R9
+            add(4, "R9", "Follow your clinician's plan and bring these recordings to your next check-up.",
+                f"diagnosed label {label}")
+
+        if all(r is not None for r in rhythm) and abs(rhythm[1]["heart_rate"] - rhythm[0]["heart_rate"]) > rules["hr_change"]:  # R10
+            add(3, "R10", "Record at rest and at the same time of day, so your recordings can be compared.",
+                f"heart rate {rhythm[0]['heart_rate']:.0f} -> {rhythm[1]['heart_rate']:.0f} bpm")
+
+        low_hrv = (not irregular[-1] and rules["hr_low"] <= hr <= rules["hr_high"]
+                   and latest["rmssd_ms"] < self.low_rmssd_cutoff(age))
+        if low_hrv:  # R11
+            add(4, "R11", "Heart rate variability is low for your age - make today a recovery day: sleep, hydration, "
+                          "lower stress.", f"RMSSD {latest['rmssd_ms']:.0f} ms < {self.low_rmssd_cutoff(age):.0f} ms "
+                                           "(10th percentile for age)")
+
+        if acts and min(a["level"] for a in acts) <= 2:  # R12
+            add(4, "R12", "Avoid strenuous exercise until a clinician has reviewed this.", "a level 1-2 action above")
+        elif group in (3, 4) or age >= rules["senior_age"]:
+            add(4, "R12", "Moderate activity (brisk walking, cycling); build up gradually.", f"group {group}, age {age:.0f}")
+        elif low_hrv:
+            add(4, "R12", "Light activity only today.", "low HRV")
+        else:
+            add(5, "R12", "Normal activity: aim for at least 150 minutes of moderate exercise a week.", "no flags")
+
+        if user.get("height_cm") and user.get("weight_kg"):  # R13
+            bmi = user["weight_kg"] / (user["height_cm"] / 100) ** 2
+            if bmi >= rules["bmi_high"]:
+                add(4, "R13", "Weight management helps heart health - discuss a plan with a clinician or dietitian.",
+                    f"BMI {bmi:.1f}")
+            elif bmi < rules["bmi_low"]:
+                add(4, "R13", "Your weight is low for your height - discuss with a clinician or dietitian.", f"BMI {bmi:.1f}")
+
+        if min(a["level"] for a in acts) >= 4:  # R14
+            add(5, "R14", "Keep recording once a week, at rest and at the same time of day, to track changes.",
+                "no level 1-3 actions")
+
+        acts.sort(key=lambda a: a["level"])
+        return plain({"top_action": acts[0], "actions": acts,
+                      "rhythm": [None if r is None else {k: round(v, 3) for k, v in r.items()} for r in rhythm],
+                      "step1": step1})
