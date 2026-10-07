@@ -70,3 +70,14 @@ Signal processing moves to `model/watch_pipeline.py` (shared later with the API)
 
 ![cleaning](model/cleaning_test.png)
 ![clusters](model/median_beat_clusters_distribution.png)
+
+## 4. Watch recommendation, step 1: ECG group + profile (`feature/watch-step1-groups`)
+
+Input: user info + **two single-lead (lead I) watch recordings** at any length / sampling rate. Train folds 1-8,
+test folds 9-10. `WatchModel.recommend` in `model/watch_pipeline.py`.
+- 4 lead-I groups from 75% normal down to 3% normal (STTC 51%, MI 48%); profiles hold on the test folds
+- a person's two recordings land in the same group 74% of the time (29% by chance)
+- beat-shape change between recordings: AUC 0.90 (threshold = 5th percentile of repeat recordings)
+- peers (same group, sex, age +-5) and how common the user's diagnosed label is among them
+
+![step 1](model/watch_step1_groups.png)
