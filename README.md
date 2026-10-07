@@ -122,3 +122,16 @@ uvicorn main:app
 Tests: `python -m pytest` (tests using PTB-XL records are skipped when the dataset folder is not in the project root).
 
 ![final](model/watch_final_eval.png)
+
+## 8. QT / corrected QT study (`study/qt-interval`)
+
+Everything QT-related is in `qt-interval/`: `qt_study.ipynb` (the study; run `model/ml.ipynb` first, it loads the
+trained model and the 12-lead clusters), `qt_interval.py` (measurement) and `qt_study.png`. QT is measured on the median beat of the 500 Hz records (QRS onset from all leads,
+tangent-method T end).
+- **Fridericia** removes the heart-rate dependence (rho 0.02); long-QT label AUC 0.88; women +8 ms
+- QTc rises ~4 ms per decade of age (also in normal ECGs)
+- QTc rises across the lead-I groups (360 -> 385 ms), still +18 / +21 / +27 ms after adjusting for age and sex
+- adding QTc does **not** improve the grouping or the risk model: the median beat already contains the T-wave timing
+- watch (lead I) QTc: median 10 ms from 12-lead, but outliers from flat T waves
+
+![qt](qt-interval/qt_study.png)
