@@ -42,3 +42,17 @@ licensed under CC BY 4.0. The dataset itself is not included in this repository.
 - recording date/time, visit number, time between a patient's recordings (median 21 days for 2-ECG patients)
 - ultra-short HRV (mean HR, SDNN, RMSSD, pNN50) from lead II with NeuroKit2 for the 1,590 two-ECG patients, and the
   change between their two ECGs: no systematic shift, but ~11 ms typical change in SDNN / RMSSD
+
+## 2. ECG similarity study (`study/ecg-similarity`)
+
+Is a patient's own pair of ECGs more similar than two ECGs of different patients (ROC AUC)?
+
+| Compared on | Euclidean | Manhattan | Cosine | Pearson / Mahalanobis |
+|---|---|---|---|---|
+| Median beat (12 leads) | 0.91 | 0.92 | 0.94 | 0.94 |
+| HRV values | 0.67 | 0.67 | 0.70 | 0.64 |
+| Raw signal | 0.55 | 0.58 | 0.46 | 0.46 |
+
+The **median beat** works best; the raw signal fails because beats fall at different times in each recording.
+
+![similarity](model/ecg_pair_similarity_auc.png)
