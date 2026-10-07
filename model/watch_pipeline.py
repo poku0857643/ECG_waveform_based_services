@@ -333,3 +333,79 @@ class WatchModel:
         return plain({"top_action": acts[0], "actions": acts,
                       "rhythm": [None if r is None else {k: round(v, 3) for k, v in r.items()} for r in rhythm],
                       "step1": step1})
+
+    # --- step 3: diagnosis-risk scores ---
+    def feature_row(self, beat_t, rhythm, user):
+        """One recording (watch_beat output + rhythm_features) + user info -> model features."""
+        s1 = self.b["step1"]
+        centroids = to_unit(s1["kmeans"].cluster_centers_)
+        group_order = sorted(s1["relabel"], key=s1["relabel"].get)  # raw k-means labels in group 1..k order
+        aligned = align(beat_t["beat"][:, 0][None], s1["reference_beat"])  # (1, 60) in mV: amplitude matters
+        v = to_unit(aligned)[0]
+        row = {f"beat_{i}": x for i, x in enumerate(aligned[0])}
+        row |= {f"sim_group_{g + 1}": v @ centroids[raw] for g, raw in enumerate(group_order)}
+        row["consistency"] = beat_t["consistency"]
+        row |= {k: rhythm[k] if rhythm else np.nan for k in RHYTHM_COLS}
+        h, w = user.get("height_cm"), user.get("weight_kg")
+        age = user.get("age")
+        row |= {"age": np.nan if age is None else age,
+                "sex": {"male": 0, "female": 1}.get(str(user.get("sex", "")).lower(), np.nan),
+                "height_cm": h or np.nan, "weight_kg": w or np.nan, "bmi": w / (h / 100) ** 2 if h and w else np.nan}
+        return row
+
+    def risk_scores(self, user, rec_1, rec_2):
+        """Per-class probability from two watch recordings (combined as chosen in training) + user info."""
+        s3 = self.b["step3"]
+        probs = []
+        for rec in (rec_1, rec_2):
+            t = watch_beat(rec["signal"], rec["fs"])
+            if t is None or not t["usable"]:
+                probs.append(None)
+                continue
+            F = pd.DataFrame([self.feature_row(t, rhythm_features(watch_rr(rec["signal"], rec["fs"])), user)])[s3["feature_cols"]]
+            probs.append(np.array([s3["models"][sc].predict_proba(F)[0, 1] for sc in SUPERCLASSES]))
+        usable = [p for p in probs if p is not None]
+        if not usable:
+            return None
+        p = np.mean(usable, axis=0) if s3["combine"] == "average of both" else usable[-1]
+        prevalence, high = s3["prevalence"], s3["risk_high"]
+        return {sc: {"probability": round(float(v), 3), "prevalence": round(float(prevalence[sc]), 3),
+                     "level": "high" if v >= high else "above average" if v >= prevalence[sc] else "below average"}
+                for sc, v in zip(SUPERCLASSES, p)}
+
+    # --- steps 1-3 together ---
+    def recommend_all(self, user, rec_1, rec_2):
+        """Group + profile, health / lifestyle actions, diagnosis-risk scores -> one prioritised list."""
+        step2 = self.health_actions(user, rec_1, rec_2)
+        risks = self.risk_scores(user, rec_1, rec_2)
+        acts = list(step2["actions"])
+        if risks:
+            label = user.get("diagnosed_label")
+            known = label in SUPERCLASSES and label != "NORM"
+            high = [sc for sc in SUPERCLASSES if sc != "NORM" and risks[sc]["level"] == "high"]
+            for sc in high:
+                if sc == label:
+                    continue  # already diagnosed: covered by R9
+                acts.append({"level": 2, "category": LEVELS[2], "rule": "S3",
+                             "action": f"High {SUPERCLASS_NAMES[sc]} score - ask a clinician about a 12-lead ECG.",
+                             "reason": f"{sc} probability {risks[sc]['probability']:.0%} (average {risks[sc]['prevalence']:.0%})"})
+            if known and risks[label]["level"] == "below average":
+                acts.append({"level": 4, "category": LEVELS[4], "rule": "S3",
+                             "action": f"Your diagnosed {SUPERCLASS_NAMES[label]} is not visible on the watch ECG - a single "
+                                       "lead can miss it, so keep your clinical follow-up.",
+                             "reason": f"{label} probability {risks[label]['probability']:.0%}"})
+            if not high and risks["NORM"]["level"] == "high" and not known:
+                acts.append({"level": 5, "category": LEVELS[5], "rule": "S3",
+                             "action": "Your watch ECG looks like typical normal ECGs (a single lead can't rule everything out).",
+                             "reason": f"NORM probability {risks['NORM']['probability']:.0%}"})
+        if any(a["rule"] == "S3" and a["level"] <= 2 for a in acts):  # keep step-2 advice consistent with a new level-2 action
+            acts = [a for a in acts if a["rule"] not in ("R12", "R14")]
+            acts.append({"level": 4, "category": LEVELS[4], "rule": "R12",
+                         "action": "Avoid strenuous exercise until a clinician has reviewed this.",
+                         "reason": "a level 1-2 action above"})
+        acts.sort(key=lambda a: a["level"])
+        step1 = step2["step1"]
+        return plain({"top_action": acts[0], "actions": acts, "risk_scores": risks,
+                      "group": step1.get("group"), "change": step1.get("change"), "recordings": step1["recordings"],
+                      "rhythm": step2["rhythm"], "peers": step1.get("peers"), "bmi": step1.get("bmi"),
+                      "disclaimer": DISCLAIMER})
