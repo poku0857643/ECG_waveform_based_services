@@ -85,3 +85,13 @@ test folds 9-10. `WatchModel.recommend` in `model/watch_pipeline.py`.
 - peers (same group, sex, age +-5) and how common the user's diagnosed label is among them
 
 ![step 1](model/watch_step1_groups.png)
+
+## 5. Step 2: health / lifestyle actions (`feature/watch-step2-actions`)
+
+14 rules (R1-R14), 5 action levels (seek care promptly, see a clinician, re-record, lifestyle, routine);
+thresholds in one `RULES` dict. `WatchModel.health_actions`.
+- irregular rhythm (possible AF): AUC 0.94, 76% sensitivity at 95% specificity
+- low HRV: below the 10th RMSSD percentile for the age band (normal sinus-rhythm patients)
+- test patients with an abnormal latest ECG get a level 1-2 action 12x more often than normal ones (43% vs 3.5%)
+
+![step 2](model/watch_step2_actions.png)
