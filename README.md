@@ -100,3 +100,21 @@ weight (the diagnosed label is never an input). `WatchModel.risk_scores` / `reco
 - with steps 1-3, level 1-2 actions for abnormal test patients rise from 43% to **62%**, still 3.5% for normal ones
 
 ![step 3](model/watch_step3_risk.png)
+
+## 7. Final model and API (`feature/final-model-api`)
+
+Train folds 1-8, tune on fold 9, refit on 1-9, **test once on fold 10**: macro AUC **0.835 (95% CI 0.823-0.846)**.
+The trained bundle is `model/watch_model.joblib`.
+
+```bash
+uvicorn main:app
+```
+
+- `POST /watch/recommendation` - body: `user` (`age`, `sex`, `height_cm`, `weight_kg`, `diagnosed_label`, all
+  optional) and `recording_1` (earlier) / `recording_2` (latest), each `{"signal": [mV, ...], "fs": Hz}`, >= 5 s.
+  Returns the prioritised actions, risk scores, group, change check, rhythm and peers.
+- `GET /watch/model-info` - version, fold-10 test metrics, rules.
+
+Tests: `python -m pytest` (tests using PTB-XL records are skipped unless `PTBXL_PATH` points to the dataset).
+
+![final](model/watch_final_eval.png)
