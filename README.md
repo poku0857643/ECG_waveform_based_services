@@ -95,3 +95,12 @@ thresholds in one `RULES` dict. `WatchModel.health_actions`.
 - test patients with an abnormal latest ECG get a level 1-2 action 12x more often than normal ones (43% vs 3.5%)
 
 ![step 2](model/watch_step2_actions.png)
+
+## 6. Step 3: diagnosis-risk scores (`feature/watch-step3-risk`)
+
+One gradient-boosting model per superclass on lead-I median beat + rhythm + group similarity + age, sex, height,
+weight (the diagnosed label is never an input). `WatchModel.risk_scores` / `recommend_all`.
+- macro AUC 0.69 (user info only) -> **0.84** (watch ECG + user info); well calibrated
+- with steps 1-3, level 1-2 actions for abnormal test patients rise from 43% to **62%**, still 3.5% for normal ones
+
+![step 3](model/watch_step3_risk.png)
