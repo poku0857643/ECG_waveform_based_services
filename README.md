@@ -35,3 +35,14 @@ available electrocardiography dataset (version 1.0.3). PhysioNet. https://doi.or
 licensed under CC BY 4.0. The dataset itself is not included in this repository.
 
 **Not a medical device.** Outputs describe similarity to PTB-XL patients; they are not a diagnosis.
+
+## 1. Data loading and HRV (`feature/data-loading-hrv`)
+
+`model/ml.ipynb`, first section:
+- loads all 21,799 records at **100 Hz** (`records100/`, 1000 samples x 12 leads = 10 s) with `wfdb`
+- patient metadata (age with >89 masked as 300 -> NaN, sex, height, weight, ...), `scp_codes` -> diagnostic
+  superclasses (NORM, MI, STTC, CD, HYP)
+- 2,111 patients have more than one ECG; `strat_fold` keeps each patient in one fold (no leakage)
+- recording date/time, visit number, time between a patient's recordings (median 21 days for 2-ECG patients)
+- ultra-short HRV (mean HR, SDNN, RMSSD, pNN50) from lead II with NeuroKit2 for the 1,590 two-ECG patients, and the
+  change between their two ECGs: no systematic shift, but ~11 ms typical change in SDNN / RMSSD
